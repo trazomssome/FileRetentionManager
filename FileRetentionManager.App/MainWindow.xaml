@@ -1,0 +1,203 @@
+<Window x:Class="FileRetentionManager.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="File Retention Manager"
+        MinHeight="760"
+        MinWidth="1120"
+        Height="800"
+        Width="1220">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Padding="24,18"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="File Retention Manager"
+                               FontSize="28"
+                               FontWeight="SemiBold" />
+                    <TextBlock Margin="0,6,0,0"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Text="{Binding StatusMessage}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                    <Button MinWidth="120"
+                            Margin="0,0,8,0"
+                            Command="{Binding ToggleActivationCommand}"
+                            Content="{Binding ActivationButtonText}" />
+                    <Button MinWidth="120"
+                            Command="{Binding ExecuteNowCommand}"
+                            Content="Run now" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="24">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="400" />
+                <ColumnDefinition Width="24" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Text="Settings"
+                               FontSize="20"
+                               FontWeight="SemiBold" />
+
+                    <Grid Margin="0,18,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="120" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Text="Condition mode" />
+                        <ComboBox Grid.Column="1"
+                                  ItemsSource="{Binding ConditionModes}"
+                                  SelectedItem="{Binding ConditionMode}" />
+                    </Grid>
+
+                    <TextBlock Margin="0,18,0,6" Text="Schedule interval" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Right"
+                                       Margin="6,0,0,0"
+                                       VerticalAlignment="Center"
+                                       Text="h" />
+                            <TextBox Text="{Binding ScheduleHours, UpdateSourceTrigger=PropertyChanged}" />
+                        </DockPanel>
+                        <DockPanel Grid.Column="2">
+                            <TextBlock DockPanel.Dock="Right"
+                                       Margin="6,0,0,0"
+                                       VerticalAlignment="Center"
+                                       Text="m" />
+                            <TextBox Text="{Binding ScheduleMinutes, UpdateSourceTrigger=PropertyChanged}" />
+                        </DockPanel>
+                        <DockPanel Grid.Column="4">
+                            <TextBlock DockPanel.Dock="Right"
+                                       Margin="6,0,0,0"
+                                       VerticalAlignment="Center"
+                                       Text="s" />
+                            <TextBox Text="{Binding ScheduleSeconds, UpdateSourceTrigger=PropertyChanged}" />
+                        </DockPanel>
+                    </Grid>
+
+                    <TextBlock Margin="0,18,0,6" Text="Target paths" />
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="8" />
+                            <RowDefinition Height="128" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button Command="{Binding AddFolderTargetPathCommand}"
+                                Content="Add folder" />
+                        <Button Grid.Column="2"
+                                Command="{Binding RemoveSelectedTargetPathCommand}"
+                                Content="Remove" />
+                        <ListBox Grid.Row="2"
+                                 Grid.ColumnSpan="3"
+                                 ItemsSource="{Binding TargetPaths}"
+                                 SelectedItem="{Binding SelectedTargetPath}" />
+                    </Grid>
+                    <CheckBox Margin="0,10,0,0"
+                              IsChecked="{Binding IncludeSubdirectories}"
+                              Content="Include subdirectories" />
+
+                    <CheckBox Margin="0,18,0,6"
+                              IsChecked="{Binding UseMaximumAge}"
+                              Content="Maximum age (days)" />
+                    <TextBox IsEnabled="{Binding UseMaximumAge}"
+                             Text="{Binding MaximumAgeDays, UpdateSourceTrigger=PropertyChanged, TargetNullValue=''}" />
+
+                    <CheckBox Margin="0,16,0,6"
+                              IsChecked="{Binding UseMinimumFileSize}"
+                              Content="Minimum size (KB)" />
+                    <TextBox IsEnabled="{Binding UseMinimumFileSize}"
+                             Text="{Binding MinimumFileSizeKb, UpdateSourceTrigger=PropertyChanged, TargetNullValue=''}" />
+
+                    <CheckBox Margin="0,16,0,6"
+                              IsChecked="{Binding UseNamePatterns}"
+                              Content="Name patterns" />
+                    <TextBox IsEnabled="{Binding UseNamePatterns}"
+                             Text="{Binding NamePatternsText, UpdateSourceTrigger=PropertyChanged}" />
+
+                    <TextBlock Margin="0,18,0,0"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Text="{Binding LastReportPath}" />
+
+                    <TextBlock Margin="0,18,0,0"
+                               Foreground="#B00020"
+                               TextWrapping="Wrap"
+                               Text="{Binding ValidationSummary}" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Cycle results"
+                               FontSize="20"
+                               FontWeight="SemiBold" />
+                    <ProgressBar Grid.Column="1"
+                                 Width="160"
+                                 Height="6"
+                                 IsIndeterminate="{Binding IsBusy}" />
+                </Grid>
+
+                <ListView Grid.Row="1" ItemsSource="{Binding Results}">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="Status" Width="100" DisplayMemberBinding="{Binding Status}" />
+                            <GridViewColumn Header="Detail" Width="260" DisplayMemberBinding="{Binding Detail}" />
+                            <GridViewColumn Header="Path" Width="420" DisplayMemberBinding="{Binding Path}" />
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+
+                <DockPanel Grid.Row="2" Margin="0,12,0,0">
+                    <TextBlock DockPanel.Dock="Left"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Text="{Binding LastRunText}" />
+                    <Button DockPanel.Dock="Right"
+                            MinWidth="110"
+                            Command="{Binding ClearResultsCommand}"
+                            Content="Clear" />
+                </DockPanel>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

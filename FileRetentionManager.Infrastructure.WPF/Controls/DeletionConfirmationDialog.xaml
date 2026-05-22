@@ -1,0 +1,13 @@
+<Window x:Class="FileRetentionManager.Infrastructure.WPF.Controls.DeletionConfirmationDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:FileRetentionManager.Infrastructure.WPF.Controls"
+        Title="Start retention sequence"
+        Width="760"
+        MinHeight="520"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResizeWithGrip">
+    <controls:DeletionConfirmationControl Request="{Binding Request}"
+                                           ConfirmCommand="{Binding ConfirmCommand}"
+                                           CancelCommand="{Binding CancelCommand}" />
+</Window>
