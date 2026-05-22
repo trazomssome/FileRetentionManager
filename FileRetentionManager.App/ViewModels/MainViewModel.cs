@@ -1,23 +1,73 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel.DataAnnotations;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using FileRetentionManager.App.Validation;
 using FileRetentionManager.Domain.Models;
 using FileRetentionManager.Domain.Rules;
 using FileRetentionManager.Domain.Services;
-using FluentValidation.Results;
+using FluentValidation;
 
 namespace FileRetentionManager.App.ViewModels;
 
-public partial class MainViewModel : ObservableObject
+public partial class MainViewModel : ObservableValidator, IRetentionSettingsValidationSource
 {
     private static readonly char[] PatternSeparators = ['\r', '\n', ';', ','];
+    private static readonly string[] ValidatedPropertyNames =
+    [
+        nameof(ScheduleHours),
+        nameof(ScheduleMinutes),
+        nameof(ScheduleSeconds),
+        nameof(TargetPaths),
+        nameof(UseMaximumAge),
+        nameof(MaximumAgeDays),
+        nameof(UseMinimumFileSize),
+        nameof(MinimumFileSizeKb),
+        nameof(UseNamePatterns),
+        nameof(NamePatternsText)
+    ];
+
+    private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> ValidationRuleNamesByProperty =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        {
+            [nameof(ScheduleHours)] =
+            [
+                nameof(RetentionSettingsDraft.ScheduleHours),
+                nameof(RetentionSettingsDraft.ScheduleInterval)
+            ],
+            [nameof(ScheduleMinutes)] =
+            [
+                nameof(RetentionSettingsDraft.ScheduleMinutes),
+                nameof(RetentionSettingsDraft.ScheduleInterval)
+            ],
+            [nameof(ScheduleSeconds)] =
+            [
+                nameof(RetentionSettingsDraft.ScheduleSeconds),
+                nameof(RetentionSettingsDraft.ScheduleInterval)
+            ],
+            [nameof(TargetPaths)] = [nameof(RetentionSettingsDraft.TargetPaths)],
+            [nameof(UseMaximumAge)] =
+            [
+                nameof(RetentionSettingsDraft.HasAnyDeletionCondition)
+            ],
+            [nameof(MaximumAgeDays)] = [nameof(RetentionSettingsDraft.MaximumAgeDays)],
+            [nameof(UseMinimumFileSize)] =
+            [
+                nameof(RetentionSettingsDraft.HasAnyDeletionCondition)
+            ],
+            [nameof(MinimumFileSizeKb)] = [nameof(RetentionSettingsDraft.MinimumFileSizeKb)],
+            [nameof(UseNamePatterns)] =
+            [
+                nameof(RetentionSettingsDraft.HasAnyDeletionCondition)
+            ],
+            [nameof(NamePatternsText)] = [nameof(RetentionSettingsDraft.NamePatterns)]
+        };
 
     private readonly IFileSystemService fileSystemService;
     private readonly IUserDecisionService userDecisionService;
     private readonly IReportGenerator reportGenerator;
     private readonly ITargetPathPickerService targetPathPickerService;
-    private readonly RetentionSettingsValidator validator = new();
     private readonly CompositeRetentionRule retentionRule = CompositeRetentionRule.Default;
     private readonly SemaphoreSlim executionLock = new(1, 1);
     private readonly SynchronizationContext? synchronizationContext;
@@ -34,8 +84,13 @@ public partial class MainViewModel : ObservableObject
         this.userDecisionService = userDecisionService;
         this.reportGenerator = reportGenerator;
         this.targetPathPickerService = targetPathPickerService;
+        Validator = new RetentionSettingsValidator();
         synchronizationContext = SynchronizationContext.Current;
+        TargetPaths.CollectionChanged += OnTargetPathsChanged;
+        ErrorsChanged += (_, _) => OnPropertyChanged(nameof(ValidationSummary));
     }
+
+    public IValidator<RetentionSettingsDraft> Validator { get; }
 
     [ObservableProperty]
     private bool isRetentionEnabled;
@@ -44,12 +99,18 @@ public partial class MainViewModel : ObservableObject
     private string activationButtonText = "Enable";
 
     [ObservableProperty]
+    [NotifyDataErrorInfo]
+    [FluentValidationProperty]
     private int scheduleHours = 24;
 
     [ObservableProperty]
+    [NotifyDataErrorInfo]
+    [FluentValidationProperty]
     private int scheduleMinutes;
 
     [ObservableProperty]
+    [NotifyDataErrorInfo]
+    [FluentValidationProperty]
     private int scheduleSeconds;
 
     [ObservableProperty]
@@ -59,21 +120,33 @@ public partial class MainViewModel : ObservableObject
     private ConditionJoinMode conditionMode = ConditionJoinMode.And;
 
     [ObservableProperty]
+    [NotifyDataErrorInfo]
+    [FluentValidationProperty]
     private bool useMaximumAge = true;
 
     [ObservableProperty]
+    [NotifyDataErrorInfo]
+    [FluentValidationProperty]
     private double? maximumAgeDays = 30;
 
     [ObservableProperty]
+    [NotifyDataErrorInfo]
+    [FluentValidationProperty]
     private bool useMinimumFileSize;
 
     [ObservableProperty]
+    [NotifyDataErrorInfo]
+    [FluentValidationProperty]
     private double? minimumFileSizeKb = 1;
 
     [ObservableProperty]
+    [NotifyDataErrorInfo]
+    [FluentValidationProperty]
     private bool useNamePatterns = true;
 
     [ObservableProperty]
+    [NotifyDataErrorInfo]
+    [FluentValidationProperty]
     private string namePatternsText = "*.tmp;*.log";
 
     [ObservableProperty]
@@ -84,9 +157,6 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private string statusMessage = "Ready.";
-
-    [ObservableProperty]
-    private string validationSummary = string.Empty;
 
     [ObservableProperty]
     private string lastReportPath = "No report has been generated yet.";
@@ -100,9 +170,12 @@ public partial class MainViewModel : ObservableObject
     public IReadOnlyList<ConditionJoinMode> ConditionModes { get; } =
         Enum.GetValues<ConditionJoinMode>();
 
+    [FluentValidationProperty]
     public ObservableCollection<string> TargetPaths { get; } = [];
 
     public ObservableCollection<DeletionResultViewModel> Results { get; } = [];
+
+    public string ValidationSummary => string.Join(Environment.NewLine, GetValidationMessages());
 
     [RelayCommand]
     private async Task AddFolderTargetPathAsync()
@@ -212,11 +285,12 @@ public partial class MainViewModel : ObservableObject
                 StatusMessage = "Scanning files.";
             });
 
-            var validation = validator.Validate(draft);
+            if (promptForSequenceStart)
+            {
+                await DispatchAsync(ValidateForm);
+            }
 
-            await DispatchAsync(() => ApplyValidation(validation));
-
-            if (!validation.IsValid)
+            if (promptForSequenceStart && HasErrors)
             {
                 await DispatchAsync(() => StatusMessage = "Settings need attention.");
                 return false;
@@ -408,6 +482,18 @@ public partial class MainViewModel : ObservableObject
         SelectedTargetPath = selectedPath;
     }
 
+    public RetentionSettingsDraft BuildDraftForValidation()
+    {
+        return BuildDraft();
+    }
+
+    public IReadOnlyList<string> GetFluentValidationRuleNames(string propertyName)
+    {
+        return ValidationRuleNamesByProperty.TryGetValue(propertyName, out var ruleNames)
+            ? ruleNames
+            : [propertyName];
+    }
+
     private RetentionSettingsDraft BuildDraft()
     {
         return new RetentionSettingsDraft(
@@ -451,11 +537,92 @@ public partial class MainViewModel : ObservableObject
         return value.Split(separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
-    private void ApplyValidation(ValidationResult validation)
+    private void ValidateForm()
     {
-        ValidationSummary = validation.IsValid
-            ? string.Empty
-            : string.Join(Environment.NewLine, validation.Errors.Select(error => error.ErrorMessage));
+        ValidateAllProperties();
+        ValidateProperty(TargetPaths, nameof(TargetPaths));
+        OnPropertyChanged(nameof(ValidationSummary));
+    }
+
+    private void OnTargetPathsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        ValidateProperty(TargetPaths, nameof(TargetPaths));
+    }
+
+    private void ValidateScheduleProperties()
+    {
+        ValidateProperty(ScheduleHours, nameof(ScheduleHours));
+        ValidateProperty(ScheduleMinutes, nameof(ScheduleMinutes));
+        ValidateProperty(ScheduleSeconds, nameof(ScheduleSeconds));
+    }
+
+    private void ValidateDeletionOptionProperties()
+    {
+        ValidateProperty(UseMaximumAge, nameof(UseMaximumAge));
+        ValidateProperty(UseMinimumFileSize, nameof(UseMinimumFileSize));
+        ValidateProperty(UseNamePatterns, nameof(UseNamePatterns));
+    }
+
+    private IEnumerable<string> GetValidationMessages()
+    {
+        return ValidatedPropertyNames
+            .SelectMany(propertyName => GetErrors(propertyName).Cast<object>())
+            .Select(error => error switch
+            {
+                ValidationResult validationResult => validationResult.ErrorMessage ?? string.Empty,
+                string message => message,
+                _ => error.ToString() ?? string.Empty
+            })
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Distinct();
+    }
+
+    partial void OnScheduleHoursChanged(int value)
+    {
+        ValidateScheduleProperties();
+    }
+
+    partial void OnScheduleMinutesChanged(int value)
+    {
+        ValidateScheduleProperties();
+    }
+
+    partial void OnScheduleSecondsChanged(int value)
+    {
+        ValidateScheduleProperties();
+    }
+
+    partial void OnUseMaximumAgeChanged(bool value)
+    {
+        ValidateProperty(MaximumAgeDays, nameof(MaximumAgeDays));
+        ValidateDeletionOptionProperties();
+    }
+
+    partial void OnMaximumAgeDaysChanged(double? value)
+    {
+        ValidateProperty(MaximumAgeDays, nameof(MaximumAgeDays));
+    }
+
+    partial void OnUseMinimumFileSizeChanged(bool value)
+    {
+        ValidateProperty(MinimumFileSizeKb, nameof(MinimumFileSizeKb));
+        ValidateDeletionOptionProperties();
+    }
+
+    partial void OnMinimumFileSizeKbChanged(double? value)
+    {
+        ValidateProperty(MinimumFileSizeKb, nameof(MinimumFileSizeKb));
+    }
+
+    partial void OnUseNamePatternsChanged(bool value)
+    {
+        ValidateProperty(NamePatternsText, nameof(NamePatternsText));
+        ValidateDeletionOptionProperties();
+    }
+
+    partial void OnNamePatternsTextChanged(string value)
+    {
+        ValidateProperty(NamePatternsText, nameof(NamePatternsText));
     }
 
     private Task DispatchAsync(Action action)

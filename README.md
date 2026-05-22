@@ -18,6 +18,7 @@
 - 삭제 결과 및 실패 사유 표시
 - 각 실행 주기별 Markdown 리포트 생성
 - Serilog 기반 파일/콘솔 로깅
+- `ObservableValidator`와 `[NotifyDataErrorInfo]` 기반 입력 검증
 
 ## 삭제 시퀀스 동작
 
@@ -107,13 +108,23 @@ xUnit과 Moq 기반 단위 테스트를 포함합니다.
 ## 기술 스택
 
 - .NET 10.0 WPF
-- CommunityToolkit.MVVM
+- CommunityToolkit.MVVM (`ObservableValidator`, `[ObservableProperty]`, `[RelayCommand]`, `[NotifyDataErrorInfo]`)
 - Microsoft.Extensions.Hosting
 - Microsoft Fluent Theme
 - Serilog
 - FluentValidation
 - xUnit
 - Moq
+
+## 검증 구조
+
+검증 규칙은 `RetentionSettingsValidator`의 FluentValidation 규칙을 단일 기준으로 유지합니다.
+`MainViewModel`은 `ObservableValidator`를 상속하고, 검증 대상 속성에는 `[NotifyDataErrorInfo]`와 FluentValidation 연결용 attribute를 적용합니다.
+
+- 속성 변경 시 WPF의 `INotifyDataErrorInfo` 흐름으로 오류가 갱신됩니다.
+- 실행 또는 활성화 시 전체 폼 검증을 위해 `ValidateAllProperties()`를 호출합니다.
+- `TargetPaths`처럼 setter가 없는 컬렉션은 추가/삭제 시 `ValidateProperty()`로 오류 상태를 갱신합니다.
+- `ValidationSummary`는 직접 `Validate()` 결과를 저장하지 않고 `ErrorsChanged` 이벤트 기반으로 표시됩니다.
 
 ## 실행 방법
 
@@ -141,5 +152,5 @@ dotnet test FileRetentionManager.sln
 - 파일 I/O는 `IFileSystemService`를 통해 수행합니다.
 - 사용자 결정은 `IUserDecisionService.AskAsync()`로 추상화합니다.
 - 삭제 조건 판단은 순수 규칙 객체에서 수행합니다.
-- 입력 검증은 FluentValidation으로 처리합니다.
+- 입력 검증 규칙은 FluentValidation으로 정의하고, WPF 오류 표시는 `ObservableValidator`와 `[NotifyDataErrorInfo]`로 연결합니다.
 - ViewModel 속성과 명령은 CommunityToolkit.MVVM 소스 제너레이터를 사용합니다.

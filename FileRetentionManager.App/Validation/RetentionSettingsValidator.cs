@@ -24,8 +24,8 @@ public sealed class RetentionSettingsValidator : AbstractValidator<RetentionSett
             .Must(paths => paths.Count > 0)
             .WithMessage("At least one target path is required.");
 
-        RuleFor(settings => settings)
-            .Must(settings => settings.HasAnyDeletionCondition)
+        RuleFor(settings => settings.HasAnyDeletionCondition)
+            .Equal(true)
             .WithMessage("At least one deletion option must be enabled.");
 
         RuleFor(settings => settings.MaximumAgeDays)

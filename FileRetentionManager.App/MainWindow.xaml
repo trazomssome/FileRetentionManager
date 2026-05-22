@@ -67,7 +67,7 @@
                         <TextBlock VerticalAlignment="Center" Text="Condition mode" />
                         <ComboBox Grid.Column="1"
                                   ItemsSource="{Binding ConditionModes}"
-                                  SelectedItem="{Binding ConditionMode}" />
+                                  SelectedItem="{Binding ConditionMode, ValidatesOnDataErrors=True, NotifyOnValidationError=True}" />
                     </Grid>
 
                     <TextBlock Margin="0,18,0,6" Text="Schedule interval" />
@@ -84,21 +84,21 @@
                                        Margin="6,0,0,0"
                                        VerticalAlignment="Center"
                                        Text="h" />
-                            <TextBox Text="{Binding ScheduleHours, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Text="{Binding ScheduleHours, UpdateSourceTrigger=PropertyChanged, ValidatesOnDataErrors=True, NotifyOnValidationError=True}" />
                         </DockPanel>
                         <DockPanel Grid.Column="2">
                             <TextBlock DockPanel.Dock="Right"
                                        Margin="6,0,0,0"
                                        VerticalAlignment="Center"
                                        Text="m" />
-                            <TextBox Text="{Binding ScheduleMinutes, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Text="{Binding ScheduleMinutes, UpdateSourceTrigger=PropertyChanged, ValidatesOnDataErrors=True, NotifyOnValidationError=True}" />
                         </DockPanel>
                         <DockPanel Grid.Column="4">
                             <TextBlock DockPanel.Dock="Right"
                                        Margin="6,0,0,0"
                                        VerticalAlignment="Center"
                                        Text="s" />
-                            <TextBox Text="{Binding ScheduleSeconds, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Text="{Binding ScheduleSeconds, UpdateSourceTrigger=PropertyChanged, ValidatesOnDataErrors=True, NotifyOnValidationError=True}" />
                         </DockPanel>
                     </Grid>
 
@@ -127,26 +127,26 @@
                                  SelectedItem="{Binding SelectedTargetPath}" />
                     </Grid>
                     <CheckBox Margin="0,10,0,0"
-                              IsChecked="{Binding IncludeSubdirectories}"
+                              IsChecked="{Binding IncludeSubdirectories, ValidatesOnDataErrors=True, NotifyOnValidationError=True}"
                               Content="Include subdirectories" />
 
                     <CheckBox Margin="0,18,0,6"
-                              IsChecked="{Binding UseMaximumAge}"
+                              IsChecked="{Binding UseMaximumAge, ValidatesOnDataErrors=True, NotifyOnValidationError=True}"
                               Content="Maximum age (days)" />
                     <TextBox IsEnabled="{Binding UseMaximumAge}"
-                             Text="{Binding MaximumAgeDays, UpdateSourceTrigger=PropertyChanged, TargetNullValue=''}" />
+                             Text="{Binding MaximumAgeDays, UpdateSourceTrigger=PropertyChanged, TargetNullValue='', ValidatesOnDataErrors=True, NotifyOnValidationError=True}" />
 
                     <CheckBox Margin="0,16,0,6"
-                              IsChecked="{Binding UseMinimumFileSize}"
+                              IsChecked="{Binding UseMinimumFileSize, ValidatesOnDataErrors=True, NotifyOnValidationError=True}"
                               Content="Minimum size (KB)" />
                     <TextBox IsEnabled="{Binding UseMinimumFileSize}"
-                             Text="{Binding MinimumFileSizeKb, UpdateSourceTrigger=PropertyChanged, TargetNullValue=''}" />
+                             Text="{Binding MinimumFileSizeKb, UpdateSourceTrigger=PropertyChanged, TargetNullValue='', ValidatesOnDataErrors=True, NotifyOnValidationError=True}" />
 
                     <CheckBox Margin="0,16,0,6"
-                              IsChecked="{Binding UseNamePatterns}"
+                              IsChecked="{Binding UseNamePatterns, ValidatesOnDataErrors=True, NotifyOnValidationError=True}"
                               Content="Name patterns" />
                     <TextBox IsEnabled="{Binding UseNamePatterns}"
-                             Text="{Binding NamePatternsText, UpdateSourceTrigger=PropertyChanged}" />
+                             Text="{Binding NamePatternsText, UpdateSourceTrigger=PropertyChanged, ValidatesOnDataErrors=True, NotifyOnValidationError=True}" />
 
                     <TextBlock Margin="0,18,0,0"
                                Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"

@@ -8,6 +8,103 @@ namespace FileRetentionManager.Tests.ViewModels;
 public sealed class MainViewModelTests
 {
     [Fact]
+    public async Task ExecuteNowCommand_SetsErrors_WhenScheduleIntervalIsZero()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.TargetPaths.Add(@"C:\RetentionTarget");
+        viewModel.ScheduleHours = 0;
+        viewModel.ScheduleMinutes = 0;
+        viewModel.ScheduleSeconds = 0;
+
+        await viewModel.ExecuteNowCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.HasErrors);
+        Assert.Contains("Schedule interval must be greater than zero.", viewModel.ValidationSummary);
+    }
+
+    [Fact]
+    public async Task ExecuteNowCommand_StopsBeforeScanning_WhenTargetPathIsMissing()
+    {
+        var fileSystemService = new Mock<IFileSystemService>(MockBehavior.Strict);
+        var userDecisionService = new Mock<IUserDecisionService>(MockBehavior.Strict);
+        var reportGenerator = new Mock<IReportGenerator>(MockBehavior.Strict);
+        var targetPathPickerService = new Mock<ITargetPathPickerService>(MockBehavior.Strict);
+        var viewModel = new MainViewModel(
+            fileSystemService.Object,
+            userDecisionService.Object,
+            reportGenerator.Object,
+            targetPathPickerService.Object);
+
+        await viewModel.ExecuteNowCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.HasErrors);
+        Assert.Contains("At least one target path is required.", viewModel.ValidationSummary);
+        fileSystemService.Verify(
+            service => service.DeleteFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        reportGenerator.Verify(
+            generator => generator.GenerateAsync(It.IsAny<RetentionCycleReport>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        userDecisionService.Verify(
+            service => service.AskAsync(It.IsAny<SequenceStartRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteNowCommand_SetsErrors_WhenAllDeletionOptionsAreDisabled()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.TargetPaths.Add(@"C:\RetentionTarget");
+        viewModel.UseMaximumAge = false;
+        viewModel.UseMinimumFileSize = false;
+        viewModel.UseNamePatterns = false;
+
+        await viewModel.ExecuteNowCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.HasErrors);
+        Assert.Contains("At least one deletion option must be enabled.", viewModel.ValidationSummary);
+    }
+
+    [Fact]
+    public async Task ExecuteNowCommand_SetsErrors_WhenEnabledOptionsHaveInvalidValues()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.TargetPaths.Add(@"C:\RetentionTarget");
+        viewModel.UseMaximumAge = true;
+        viewModel.MaximumAgeDays = null;
+        viewModel.UseMinimumFileSize = true;
+        viewModel.MinimumFileSizeKb = 0;
+        viewModel.UseNamePatterns = true;
+        viewModel.NamePatternsText = string.Empty;
+
+        await viewModel.ExecuteNowCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.HasErrors);
+        Assert.Contains("Maximum age is required when the option is enabled.", viewModel.ValidationSummary);
+        Assert.Contains("Minimum size must be greater than zero.", viewModel.ValidationSummary);
+        Assert.Contains("At least one name pattern is required when the option is enabled.", viewModel.ValidationSummary);
+    }
+
+    [Fact]
+    public async Task TargetPaths_CollectionChanges_UpdateValidationErrors()
+    {
+        var viewModel = CreateViewModel();
+
+        await viewModel.ExecuteNowCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.HasErrors);
+        Assert.Contains("At least one target path is required.", viewModel.ValidationSummary);
+
+        viewModel.TargetPaths.Add(@"C:\RetentionTarget");
+
+        Assert.DoesNotContain("At least one target path is required.", viewModel.ValidationSummary);
+
+        viewModel.TargetPaths.Clear();
+
+        Assert.Contains("At least one target path is required.", viewModel.ValidationSummary);
+    }
+
+    [Fact]
     public async Task ExecuteNowCommand_DeletesMatchingFiles_AndGeneratesReport()
     {
         const string targetPath = @"C:\RetentionTarget";
@@ -210,5 +307,14 @@ public sealed class MainViewModelTests
 
         Assert.Contains(targetPath, viewModel.TargetPaths);
         Assert.Equal(targetPath, viewModel.SelectedTargetPath);
+    }
+
+    private static MainViewModel CreateViewModel()
+    {
+        return new MainViewModel(
+            new Mock<IFileSystemService>().Object,
+            new Mock<IUserDecisionService>().Object,
+            new Mock<IReportGenerator>().Object,
+            new Mock<ITargetPathPickerService>().Object);
     }
 }
