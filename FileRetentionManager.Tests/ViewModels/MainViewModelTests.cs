@@ -10,6 +10,24 @@ namespace FileRetentionManager.Tests.ViewModels;
 public sealed class MainViewModelTests
 {
     [Fact]
+    public void ValidatedProperties_HaveFluentValidationAttributesOnGeneratedProperties()
+    {
+        var propertyNames = typeof(MainViewModel)
+            .GetProperties()
+            .Where(property => Attribute.IsDefined(property, typeof(FluentValidationPropertyAttribute)))
+            .Select(property => property.Name)
+            .ToArray();
+
+        Assert.Contains(nameof(MainViewModel.ScheduleHours), propertyNames);
+        Assert.Contains(nameof(MainViewModel.ScheduleMinutes), propertyNames);
+        Assert.Contains(nameof(MainViewModel.ScheduleSeconds), propertyNames);
+        Assert.Contains(nameof(MainViewModel.MaximumAgeDays), propertyNames);
+        Assert.Contains(nameof(MainViewModel.MinimumFileSizeKb), propertyNames);
+        Assert.Contains(nameof(MainViewModel.NamePatternsText), propertyNames);
+        Assert.Contains(nameof(MainViewModel.TargetPaths), propertyNames);
+    }
+
+    [Fact]
     public async Task ExecuteNowCommand_SetsErrors_WhenScheduleIntervalIsZero()
     {
         var viewModel = CreateViewModel();

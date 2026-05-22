@@ -13,13 +13,18 @@ public sealed record RetentionSettingsDraft(
     bool UseMinimumFileSize,
     double? MinimumFileSizeKb,
     bool UseNamePatterns,
-    IReadOnlyList<string> NamePatterns,
+    string NamePatternsText,
     ConditionJoinMode ConditionMode)
 {
+    private static readonly char[] NamePatternSeparators = ['\r', '\n', ';', ','];
+
     public TimeSpan ScheduleInterval => new(ScheduleHours, ScheduleMinutes, ScheduleSeconds);
 
     public bool HasAnyDeletionCondition =>
         UseMaximumAge ||
         UseMinimumFileSize ||
         UseNamePatterns;
+
+    public IReadOnlyList<string> NamePatterns =>
+        NamePatternsText.Split(NamePatternSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }

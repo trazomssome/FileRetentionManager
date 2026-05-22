@@ -294,7 +294,7 @@ public sealed class RetentionSequenceServiceTests
             false,
             1,
             true,
-            ["*.tmp", "*.log"],
+            "*.tmp;*.log",
             ConditionJoinMode.And);
     }
 

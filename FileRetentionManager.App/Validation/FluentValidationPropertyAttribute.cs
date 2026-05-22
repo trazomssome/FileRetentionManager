@@ -15,13 +15,8 @@ public sealed class FluentValidationPropertyAttribute : ValidationAttribute
             return ValidationResult.Success;
         }
 
-        var ruleNames = source.GetFluentValidationRuleNames(validationContext.MemberName);
-        var ruleNameSet = ruleNames.ToHashSet(StringComparer.Ordinal);
-        var validationResult = source.Validator.Validate(source.BuildDraftForValidation());
-        var messages = validationResult.Errors
-            .Where(error => ruleNameSet.Contains(error.PropertyName))
-            .Select(error => error.ErrorMessage)
-            .Distinct()
+        var messages = source
+            .ValidateRetentionSettingsProperty(validationContext.MemberName)
             .ToArray();
 
         return messages.Length == 0

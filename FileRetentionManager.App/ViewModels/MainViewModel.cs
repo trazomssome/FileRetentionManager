@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel.DataAnnotations;
+using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using FileRetentionManager.App.Services;
@@ -13,56 +14,7 @@ namespace FileRetentionManager.App.ViewModels;
 
 public partial class MainViewModel : ObservableValidator, IRetentionSettingsValidationSource
 {
-    private static readonly char[] PatternSeparators = ['\r', '\n', ';', ','];
-    private static readonly string[] ValidatedPropertyNames =
-    [
-        nameof(ScheduleHours),
-        nameof(ScheduleMinutes),
-        nameof(ScheduleSeconds),
-        nameof(TargetPaths),
-        nameof(UseMaximumAge),
-        nameof(MaximumAgeDays),
-        nameof(UseMinimumFileSize),
-        nameof(MinimumFileSizeKb),
-        nameof(UseNamePatterns),
-        nameof(NamePatternsText)
-    ];
-
-    private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> ValidationRuleNamesByProperty =
-        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
-        {
-            [nameof(ScheduleHours)] =
-            [
-                nameof(RetentionSettingsDraft.ScheduleHours),
-                nameof(RetentionSettingsDraft.ScheduleInterval)
-            ],
-            [nameof(ScheduleMinutes)] =
-            [
-                nameof(RetentionSettingsDraft.ScheduleMinutes),
-                nameof(RetentionSettingsDraft.ScheduleInterval)
-            ],
-            [nameof(ScheduleSeconds)] =
-            [
-                nameof(RetentionSettingsDraft.ScheduleSeconds),
-                nameof(RetentionSettingsDraft.ScheduleInterval)
-            ],
-            [nameof(TargetPaths)] = [nameof(RetentionSettingsDraft.TargetPaths)],
-            [nameof(UseMaximumAge)] =
-            [
-                nameof(RetentionSettingsDraft.HasAnyDeletionCondition)
-            ],
-            [nameof(MaximumAgeDays)] = [nameof(RetentionSettingsDraft.MaximumAgeDays)],
-            [nameof(UseMinimumFileSize)] =
-            [
-                nameof(RetentionSettingsDraft.HasAnyDeletionCondition)
-            ],
-            [nameof(MinimumFileSizeKb)] = [nameof(RetentionSettingsDraft.MinimumFileSizeKb)],
-            [nameof(UseNamePatterns)] =
-            [
-                nameof(RetentionSettingsDraft.HasAnyDeletionCondition)
-            ],
-            [nameof(NamePatternsText)] = [nameof(RetentionSettingsDraft.NamePatterns)]
-        };
+    private static readonly Lazy<IReadOnlyList<string>> ValidatedPropertyNames = new(GetValidatedPropertyNames);
 
     private readonly IRetentionSequenceService retentionSequenceService;
     private readonly ITargetPathPickerService targetPathPickerService;
@@ -381,16 +333,17 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
         SelectedTargetPath = selectedPath;
     }
 
-    public RetentionSettingsDraft BuildDraftForValidation()
+    public IReadOnlyList<string> ValidateRetentionSettingsProperty(string propertyName)
     {
-        return BuildDraft();
-    }
+        var validationResult = Validator.Validate(
+            BuildDraft(),
+            options => options.IncludeProperties(propertyName));
 
-    public IReadOnlyList<string> GetFluentValidationRuleNames(string propertyName)
-    {
-        return ValidationRuleNamesByProperty.TryGetValue(propertyName, out var ruleNames)
-            ? ruleNames
-            : [propertyName];
+        return validationResult.Errors
+            .Select(error => error.ErrorMessage)
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Distinct()
+            .ToArray();
     }
 
     private RetentionSettingsDraft BuildDraft()
@@ -406,13 +359,8 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
             UseMinimumFileSize,
             MinimumFileSizeKb,
             UseNamePatterns,
-            Split(NamePatternsText, PatternSeparators),
+            NamePatternsText,
             ConditionMode);
-    }
-
-    private static IReadOnlyList<string> Split(string value, char[] separators)
-    {
-        return value.Split(separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
     private void ValidateForm()
@@ -443,7 +391,7 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
 
     private IEnumerable<string> GetValidationMessages()
     {
-        return ValidatedPropertyNames
+        return ValidatedPropertyNames.Value
             .SelectMany(propertyName => GetErrors(propertyName).Cast<object>())
             .Select(error => error switch
             {
@@ -453,6 +401,15 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
             })
             .Where(message => !string.IsNullOrWhiteSpace(message))
             .Distinct();
+    }
+
+    private static IReadOnlyList<string> GetValidatedPropertyNames()
+    {
+        return typeof(MainViewModel)
+            .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+            .Where(property => property.GetCustomAttribute<FluentValidationPropertyAttribute>() is not null)
+            .Select(property => property.Name)
+            .ToArray();
     }
 
     partial void OnScheduleHoursChanged(int value)
