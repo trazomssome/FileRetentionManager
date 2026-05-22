@@ -3,9 +3,9 @@ using System.Collections.Specialized;
 using System.ComponentModel.DataAnnotations;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using FileRetentionManager.App.Services;
 using FileRetentionManager.App.Validation;
 using FileRetentionManager.Domain.Models;
-using FileRetentionManager.Domain.Rules;
 using FileRetentionManager.Domain.Services;
 using FluentValidation;
 
@@ -64,25 +64,17 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
             [nameof(NamePatternsText)] = [nameof(RetentionSettingsDraft.NamePatterns)]
         };
 
-    private readonly IFileSystemService fileSystemService;
-    private readonly IUserDecisionService userDecisionService;
-    private readonly IReportGenerator reportGenerator;
+    private readonly IRetentionSequenceService retentionSequenceService;
     private readonly ITargetPathPickerService targetPathPickerService;
-    private readonly CompositeRetentionRule retentionRule = CompositeRetentionRule.Default;
-    private readonly SemaphoreSlim executionLock = new(1, 1);
     private readonly SynchronizationContext? synchronizationContext;
 
     private CancellationTokenSource? scheduleCancellation;
 
     public MainViewModel(
-        IFileSystemService fileSystemService,
-        IUserDecisionService userDecisionService,
-        IReportGenerator reportGenerator,
+        IRetentionSequenceService retentionSequenceService,
         ITargetPathPickerService targetPathPickerService)
     {
-        this.fileSystemService = fileSystemService;
-        this.userDecisionService = userDecisionService;
-        this.reportGenerator = reportGenerator;
+        this.retentionSequenceService = retentionSequenceService;
         this.targetPathPickerService = targetPathPickerService;
         Validator = new RetentionSettingsValidator();
         synchronizationContext = SynchronizationContext.Current;
@@ -209,7 +201,10 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
         }
 
         var draft = BuildDraft();
-        var sequenceStarted = await ExecuteCycleAsync(draft, CancellationToken.None, promptForSequenceStart: true);
+        var sequenceStarted = await ExecuteCycleFromViewModelAsync(
+            draft,
+            CancellationToken.None,
+            promptForSequenceStart: true);
 
         if (!sequenceStarted)
         {
@@ -226,7 +221,7 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
     [RelayCommand]
     private async Task ExecuteNowAsync()
     {
-        await ExecuteCycleAsync(BuildDraft(), CancellationToken.None, promptForSequenceStart: true);
+        await ExecuteCycleFromViewModelAsync(BuildDraft(), CancellationToken.None, promptForSequenceStart: true);
     }
 
     [RelayCommand]
@@ -244,7 +239,7 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
 
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                await ExecuteCycleAsync(draft, cancellationToken, promptForSequenceStart: false);
+                await ExecuteCycleFromViewModelAsync(draft, cancellationToken, promptForSequenceStart: false);
             }
         }
         catch (OperationCanceledException)
@@ -262,20 +257,11 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
         }
     }
 
-    private async Task<bool> ExecuteCycleAsync(
+    private async Task<bool> ExecuteCycleFromViewModelAsync(
         RetentionSettingsDraft draft,
         CancellationToken cancellationToken,
         bool promptForSequenceStart)
     {
-        if (!await executionLock.WaitAsync(TimeSpan.Zero, cancellationToken))
-        {
-            await DispatchAsync(() => StatusMessage = "A retention cycle is already running.");
-            return false;
-        }
-
-        var startedAtUtc = DateTimeOffset.UtcNow;
-        var notes = new List<string>();
-
         try
         {
             await DispatchAsync(() =>
@@ -296,132 +282,45 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
                 return false;
             }
 
-            var criteria = BuildCriteria(draft, startedAtUtc);
-            var candidates = await FindCandidatesAsync(draft.TargetPaths, criteria, notes, cancellationToken);
-
-            if (promptForSequenceStart)
-            {
-                var request = new SequenceStartRequest(candidates, criteria, draft.TargetPaths);
-                var decision = await userDecisionService.AskAsync(request, cancellationToken);
-
-                if (decision != UserDecision.Approved)
-                {
-                    await DispatchAsync(() => ApplySequenceStartRejected(candidates));
-                    return false;
-                }
-            }
-
-            var deletionResults = candidates.Count > 0
-                ? await DeleteCandidatesAsync(candidates, cancellationToken)
-                : [];
-
-            if (candidates.Count == 0)
-            {
-                notes.Add("No files matched the active retention criteria.");
-            }
-
-            var completedAtUtc = DateTimeOffset.UtcNow;
-            var report = new RetentionCycleReport(
-                Guid.NewGuid().ToString("N")[..8],
-                startedAtUtc,
-                completedAtUtc,
-                criteria,
-                draft.TargetPaths,
-                true,
-                promptForSequenceStart,
-                candidates,
-                deletionResults,
-                notes);
-
-            var artifact = await reportGenerator.GenerateAsync(report, cancellationToken);
-            await DispatchAsync(() => ApplyCycleResult(completedAtUtc, artifact, candidates, deletionResults));
-            return true;
-        }
-        catch (OperationCanceledException)
-        {
-            await DispatchAsync(() => StatusMessage = "Retention cycle cancelled.");
-            return false;
+            var result = await retentionSequenceService.ExecuteAsync(draft, promptForSequenceStart, cancellationToken);
+            var sequenceStarted = false;
+            await DispatchAsync(() => sequenceStarted = ApplySequenceResult(result));
+            return sequenceStarted;
         }
         finally
         {
             await DispatchAsync(() => IsBusy = false);
-            executionLock.Release();
         }
     }
 
-    private async Task<IReadOnlyList<FileMetadata>> FindCandidatesAsync(
-        IReadOnlyList<string> targetPaths,
-        RetentionCriteria criteria,
-        List<string> notes,
-        CancellationToken cancellationToken)
+    private bool ApplySequenceResult(RetentionSequenceResult result)
     {
-        var candidates = new List<FileMetadata>();
-        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var targetPath in targetPaths)
+        switch (result.Status)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (!fileSystemService.DirectoryExists(targetPath) && !fileSystemService.FileExists(targetPath))
-            {
-                notes.Add($"Target path does not exist: `{targetPath}`.");
-                continue;
-            }
-
-            try
-            {
-                var files = await fileSystemService.EnumerateFilesAsync(
-                    targetPath,
-                    criteria.IncludeSubdirectories,
-                    cancellationToken);
-
-                foreach (var file in files.Where(file => retentionRule.IsMatch(file, criteria)))
+            case RetentionSequenceStatus.Completed:
+                if (result.CompletedAtUtc is null || result.Report is null)
                 {
-                    if (seenPaths.Add(file.Path))
-                    {
-                        candidates.Add(file);
-                    }
+                    throw new InvalidOperationException("Completed retention sequence results must include completion time and report artifact.");
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                notes.Add($"Target path could not be scanned: `{targetPath}`. {exception.Message}");
-            }
+
+                ApplyCycleResult(
+                    result.CompletedAtUtc.Value,
+                    result.Report,
+                    result.Candidates,
+                    result.DeletionResults);
+                return true;
+            case RetentionSequenceStatus.Rejected:
+                ApplySequenceStartRejected(result.Candidates);
+                return false;
+            case RetentionSequenceStatus.AlreadyRunning:
+                StatusMessage = "A retention cycle is already running.";
+                return false;
+            case RetentionSequenceStatus.Cancelled:
+                StatusMessage = "Retention cycle cancelled.";
+                return false;
+            default:
+                throw new InvalidOperationException($"Unsupported retention sequence status: {result.Status}");
         }
-
-        return candidates;
-    }
-
-    private async Task<IReadOnlyList<DeletionResult>> DeleteCandidatesAsync(
-        IReadOnlyList<FileMetadata> candidates,
-        CancellationToken cancellationToken)
-    {
-        var results = new List<DeletionResult>();
-
-        foreach (var candidate in candidates)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            try
-            {
-                await fileSystemService.DeleteFileAsync(candidate.Path, cancellationToken);
-                results.Add(new DeletionResult(candidate.Path, true, null));
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                results.Add(new DeletionResult(candidate.Path, false, exception.Message));
-            }
-        }
-
-        return results;
     }
 
     private void ApplyCycleResult(
@@ -509,27 +408,6 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
             UseNamePatterns,
             Split(NamePatternsText, PatternSeparators),
             ConditionMode);
-    }
-
-    private static RetentionCriteria BuildCriteria(RetentionSettingsDraft draft, DateTimeOffset nowUtc)
-    {
-        var olderThanUtc = draft.UseMaximumAge && draft.MaximumAgeDays.HasValue
-            ? nowUtc.AddDays(-draft.MaximumAgeDays.Value)
-            : (DateTimeOffset?)null;
-        var minimumSizeBytes = draft.UseMinimumFileSize && draft.MinimumFileSizeKb.HasValue
-            ? (long)(draft.MinimumFileSizeKb.Value * 1024)
-            : (long?)null;
-        var namePatterns = draft.UseNamePatterns
-            ? draft.NamePatterns
-            : [];
-
-        return new RetentionCriteria(
-            olderThanUtc,
-            minimumSizeBytes,
-            namePatterns,
-            draft.TargetPaths,
-            draft.IncludeSubdirectories,
-            draft.ConditionMode);
     }
 
     private static IReadOnlyList<string> Split(string value, char[] separators)

@@ -1,3 +1,5 @@
+using FileRetentionManager.App.Services;
+using FileRetentionManager.App.Validation;
 using FileRetentionManager.App.ViewModels;
 using FileRetentionManager.Domain.Models;
 using FileRetentionManager.Domain.Services;
@@ -23,30 +25,20 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
-    public async Task ExecuteNowCommand_StopsBeforeScanning_WhenTargetPathIsMissing()
+    public async Task ExecuteNowCommand_StopsBeforeCallingSequence_WhenTargetPathIsMissing()
     {
-        var fileSystemService = new Mock<IFileSystemService>(MockBehavior.Strict);
-        var userDecisionService = new Mock<IUserDecisionService>(MockBehavior.Strict);
-        var reportGenerator = new Mock<IReportGenerator>(MockBehavior.Strict);
-        var targetPathPickerService = new Mock<ITargetPathPickerService>(MockBehavior.Strict);
-        var viewModel = new MainViewModel(
-            fileSystemService.Object,
-            userDecisionService.Object,
-            reportGenerator.Object,
-            targetPathPickerService.Object);
+        var sequenceService = new Mock<IRetentionSequenceService>(MockBehavior.Strict);
+        var viewModel = CreateViewModel(sequenceService);
 
         await viewModel.ExecuteNowCommand.ExecuteAsync(null);
 
         Assert.True(viewModel.HasErrors);
         Assert.Contains("At least one target path is required.", viewModel.ValidationSummary);
-        fileSystemService.Verify(
-            service => service.DeleteFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        reportGenerator.Verify(
-            generator => generator.GenerateAsync(It.IsAny<RetentionCycleReport>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        userDecisionService.Verify(
-            service => service.AskAsync(It.IsAny<SequenceStartRequest>(), It.IsAny<CancellationToken>()),
+        sequenceService.Verify(
+            service => service.ExecuteAsync(
+                It.IsAny<RetentionSettingsDraft>(),
+                It.IsAny<bool>(),
+                It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -105,139 +97,73 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
-    public async Task ExecuteNowCommand_DeletesMatchingFiles_AndGeneratesReport()
+    public async Task ExecuteNowCommand_AppliesCompletedSequenceResult()
     {
         const string targetPath = @"C:\RetentionTarget";
         const string reportPath = @"C:\Reports\report.md";
-        var now = DateTimeOffset.UtcNow;
+        var completedAt = DateTimeOffset.UtcNow;
         var matchedFile = new FileMetadata(
             @"C:\RetentionTarget\old.tmp",
             "old.tmp",
-            2 * 1024 * 1024,
-            now.AddDays(-60),
-            now.AddDays(-45));
-        var ignoredFile = new FileMetadata(
-            @"C:\RetentionTarget\fresh.tmp",
-            "fresh.tmp",
-            2 * 1024 * 1024,
-            now.AddDays(-2),
-            now.AddDays(-1));
-
-        var fileSystemService = new Mock<IFileSystemService>();
-        fileSystemService
-            .Setup(service => service.DirectoryExists(targetPath))
-            .Returns(true);
-        fileSystemService
-            .Setup(service => service.FileExists(targetPath))
-            .Returns(false);
-        fileSystemService
-            .Setup(service => service.EnumerateFilesAsync(targetPath, true, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([matchedFile, ignoredFile]);
-        fileSystemService
-            .Setup(service => service.DeleteFileAsync(matchedFile.Path, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var userDecisionService = new Mock<IUserDecisionService>();
-        userDecisionService
-            .Setup(service => service.AskAsync(It.IsAny<SequenceStartRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(UserDecision.Approved);
-        var reportGenerator = new Mock<IReportGenerator>();
-        reportGenerator
-            .Setup(generator => generator.GenerateAsync(It.IsAny<RetentionCycleReport>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ReportArtifact(reportPath, "# report"));
-        var targetPathPickerService = new Mock<ITargetPathPickerService>();
-
-        var viewModel = new MainViewModel(
-            fileSystemService.Object,
-            userDecisionService.Object,
-            reportGenerator.Object,
-            targetPathPickerService.Object)
-        {
-            MaximumAgeDays = 30,
-            UseMinimumFileSize = true,
-            MinimumFileSizeKb = 1024,
-            NamePatternsText = "*.tmp"
-        };
+            2048,
+            completedAt.AddDays(-60),
+            completedAt.AddDays(-45));
+        var sequenceService = new Mock<IRetentionSequenceService>();
+        sequenceService
+            .Setup(service => service.ExecuteAsync(
+                It.Is<RetentionSettingsDraft>(draft => draft.TargetPaths.Contains(targetPath)),
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RetentionSequenceResult(
+                RetentionSequenceStatus.Completed,
+                completedAt,
+                new ReportArtifact(reportPath, "# report"),
+                [matchedFile],
+                [new DeletionResult(matchedFile.Path, true, null)],
+                []));
+        var viewModel = CreateViewModel(sequenceService);
         viewModel.TargetPaths.Add(targetPath);
 
         await viewModel.ExecuteNowCommand.ExecuteAsync(null);
 
-        fileSystemService.Verify(
-            service => service.DeleteFileAsync(matchedFile.Path, It.IsAny<CancellationToken>()),
-            Times.Once);
-        fileSystemService.Verify(
-            service => service.DeleteFileAsync(ignoredFile.Path, It.IsAny<CancellationToken>()),
-            Times.Never);
-        reportGenerator.Verify(
-            generator => generator.GenerateAsync(It.IsAny<RetentionCycleReport>(), It.IsAny<CancellationToken>()),
-            Times.Once);
         Assert.Equal(reportPath, viewModel.LastReportPath);
+        Assert.Equal($"Last run: {completedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}", viewModel.LastRunText);
+        Assert.Equal("Cycle completed. 1 matched, 1 deleted, 0 failed.", viewModel.StatusMessage);
         Assert.Contains(viewModel.Results, result => result.Path == matchedFile.Path && result.Status == "Deleted");
     }
 
     [Fact]
-    public async Task ExecuteNowCommand_AsksBeforeStartingSequence()
+    public async Task ExecuteNowCommand_PromptsWhenCallingSequence()
     {
-        const string targetPath = @"C:\RetentionTarget";
-        var now = DateTimeOffset.UtcNow;
-        var matchedFile = new FileMetadata(
-            @"C:\RetentionTarget\old.log",
-            "old.log",
-            512,
-            now.AddDays(-60),
-            now.AddDays(-45));
-
-        var fileSystemService = new Mock<IFileSystemService>();
-        fileSystemService
-            .Setup(service => service.DirectoryExists(targetPath))
-            .Returns(true);
-        fileSystemService
-            .Setup(service => service.FileExists(targetPath))
-            .Returns(false);
-        fileSystemService
-            .Setup(service => service.EnumerateFilesAsync(targetPath, true, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([matchedFile]);
-        fileSystemService
-            .Setup(service => service.DeleteFileAsync(matchedFile.Path, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var userDecisionService = new Mock<IUserDecisionService>();
-        userDecisionService
-            .Setup(service => service.AskAsync(It.IsAny<SequenceStartRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(UserDecision.Approved);
-
-        var reportGenerator = new Mock<IReportGenerator>();
-        reportGenerator
-            .Setup(generator => generator.GenerateAsync(It.IsAny<RetentionCycleReport>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ReportArtifact(@"C:\Reports\report.md", "# report"));
-        var targetPathPickerService = new Mock<ITargetPathPickerService>();
-
-        var viewModel = new MainViewModel(
-            fileSystemService.Object,
-            userDecisionService.Object,
-            reportGenerator.Object,
-            targetPathPickerService.Object)
-        {
-            MaximumAgeDays = 30,
-            MinimumFileSizeKb = null,
-            NamePatternsText = "*.log"
-        };
-        viewModel.TargetPaths.Add(targetPath);
+        var sequenceService = new Mock<IRetentionSequenceService>();
+        sequenceService
+            .Setup(service => service.ExecuteAsync(
+                It.IsAny<RetentionSettingsDraft>(),
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RetentionSequenceResult(
+                RetentionSequenceStatus.Completed,
+                DateTimeOffset.UtcNow,
+                new ReportArtifact(@"C:\Reports\report.md", "# report"),
+                [],
+                [],
+                []));
+        var viewModel = CreateViewModel(sequenceService);
+        viewModel.TargetPaths.Add(@"C:\RetentionTarget");
 
         await viewModel.ExecuteNowCommand.ExecuteAsync(null);
 
-        userDecisionService.Verify(
-            service => service.AskAsync(It.IsAny<SequenceStartRequest>(), It.IsAny<CancellationToken>()),
-            Times.Once);
-        fileSystemService.Verify(
-            service => service.DeleteFileAsync(matchedFile.Path, It.IsAny<CancellationToken>()),
+        sequenceService.Verify(
+            service => service.ExecuteAsync(
+                It.IsAny<RetentionSettingsDraft>(),
+                true,
+                It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     [Fact]
-    public async Task ExecuteNowCommand_DoesNotDelete_WhenSequenceStartIsRejected()
+    public async Task ExecuteNowCommand_AppliesRejectedSequenceResult()
     {
-        const string targetPath = @"C:\RetentionTarget";
         var now = DateTimeOffset.UtcNow;
         var matchedFile = new FileMetadata(
             @"C:\RetentionTarget\old.log",
@@ -245,63 +171,73 @@ public sealed class MainViewModelTests
             512,
             now.AddDays(-60),
             now.AddDays(-45));
-
-        var fileSystemService = new Mock<IFileSystemService>();
-        fileSystemService
-            .Setup(service => service.DirectoryExists(targetPath))
-            .Returns(true);
-        fileSystemService
-            .Setup(service => service.FileExists(targetPath))
-            .Returns(false);
-        fileSystemService
-            .Setup(service => service.EnumerateFilesAsync(targetPath, true, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([matchedFile]);
-
-        var userDecisionService = new Mock<IUserDecisionService>();
-        userDecisionService
-            .Setup(service => service.AskAsync(It.IsAny<SequenceStartRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(UserDecision.Rejected);
-
-        var reportGenerator = new Mock<IReportGenerator>();
-        var targetPathPickerService = new Mock<ITargetPathPickerService>();
-        var viewModel = new MainViewModel(
-            fileSystemService.Object,
-            userDecisionService.Object,
-            reportGenerator.Object,
-            targetPathPickerService.Object)
-        {
-            MaximumAgeDays = 30,
-            NamePatternsText = "*.log"
-        };
-        viewModel.TargetPaths.Add(targetPath);
+        var sequenceService = new Mock<IRetentionSequenceService>();
+        sequenceService
+            .Setup(service => service.ExecuteAsync(
+                It.IsAny<RetentionSettingsDraft>(),
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RetentionSequenceResult(
+                RetentionSequenceStatus.Rejected,
+                null,
+                null,
+                [matchedFile],
+                [],
+                []));
+        var viewModel = CreateViewModel(sequenceService);
+        viewModel.TargetPaths.Add(@"C:\RetentionTarget");
 
         await viewModel.ExecuteNowCommand.ExecuteAsync(null);
 
-        fileSystemService.Verify(
-            service => service.DeleteFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        reportGenerator.Verify(
-            generator => generator.GenerateAsync(It.IsAny<RetentionCycleReport>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        Assert.Equal("Sequence start cancelled. 1 files were not deleted.", viewModel.StatusMessage);
         Assert.Contains(viewModel.Results, result => result.Path == matchedFile.Path && result.Status == "Preview");
+    }
+
+    [Fact]
+    public async Task ExecuteNowCommand_AppliesAlreadyRunningSequenceResult()
+    {
+        var sequenceService = new Mock<IRetentionSequenceService>();
+        sequenceService
+            .Setup(service => service.ExecuteAsync(
+                It.IsAny<RetentionSettingsDraft>(),
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RetentionSequenceResult.AlreadyRunning);
+        var viewModel = CreateViewModel(sequenceService);
+        viewModel.TargetPaths.Add(@"C:\RetentionTarget");
+
+        await viewModel.ExecuteNowCommand.ExecuteAsync(null);
+
+        Assert.Equal("A retention cycle is already running.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ExecuteNowCommand_AppliesCancelledSequenceResult()
+    {
+        var sequenceService = new Mock<IRetentionSequenceService>();
+        sequenceService
+            .Setup(service => service.ExecuteAsync(
+                It.IsAny<RetentionSettingsDraft>(),
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RetentionSequenceResult.Cancelled);
+        var viewModel = CreateViewModel(sequenceService);
+        viewModel.TargetPaths.Add(@"C:\RetentionTarget");
+
+        await viewModel.ExecuteNowCommand.ExecuteAsync(null);
+
+        Assert.Equal("Retention cycle cancelled.", viewModel.StatusMessage);
     }
 
     [Fact]
     public async Task AddFolderTargetPathCommand_AddsSelectedFolder()
     {
         const string targetPath = @"C:\RetentionTarget";
-        var fileSystemService = new Mock<IFileSystemService>();
-        var userDecisionService = new Mock<IUserDecisionService>();
-        var reportGenerator = new Mock<IReportGenerator>();
         var targetPathPickerService = new Mock<ITargetPathPickerService>();
         targetPathPickerService
             .Setup(service => service.PickFolderAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(targetPath);
-        var viewModel = new MainViewModel(
-            fileSystemService.Object,
-            userDecisionService.Object,
-            reportGenerator.Object,
-            targetPathPickerService.Object);
+        var viewModel = CreateViewModel(targetPathPickerService: targetPathPickerService);
 
         await viewModel.AddFolderTargetPathCommand.ExecuteAsync(null);
 
@@ -309,12 +245,12 @@ public sealed class MainViewModelTests
         Assert.Equal(targetPath, viewModel.SelectedTargetPath);
     }
 
-    private static MainViewModel CreateViewModel()
+    private static MainViewModel CreateViewModel(
+        Mock<IRetentionSequenceService>? sequenceService = null,
+        Mock<ITargetPathPickerService>? targetPathPickerService = null)
     {
         return new MainViewModel(
-            new Mock<IFileSystemService>().Object,
-            new Mock<IUserDecisionService>().Object,
-            new Mock<IReportGenerator>().Object,
-            new Mock<ITargetPathPickerService>().Object);
+            (sequenceService ?? new Mock<IRetentionSequenceService>()).Object,
+            (targetPathPickerService ?? new Mock<ITargetPathPickerService>()).Object);
     }
 }

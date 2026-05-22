@@ -1,6 +1,8 @@
 using System.IO;
 using System.Windows;
+using FileRetentionManager.App.Services;
 using FileRetentionManager.App.ViewModels;
+using FileRetentionManager.Domain.Rules;
 using FileRetentionManager.Domain.Services;
 using FileRetentionManager.Infrastructure.WPF.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,11 +33,13 @@ public partial class App : Application
                 services.AddSingleton<IFileSystemService, PhysicalFileSystemService>();
                 services.AddSingleton<IUserDecisionService, WpfUserDecisionService>();
                 services.AddSingleton<ITargetPathPickerService, WpfTargetPathPickerService>();
+                services.AddSingleton<IRetentionRule>(CompositeRetentionRule.Default);
                 services.AddSingleton<IReportGenerator>(provider =>
                     new MarkdownReportGenerator(
                         provider.GetRequiredService<IFileSystemService>(),
                         Path.Combine(AppContext.BaseDirectory, "reports"),
                         provider.GetRequiredService<ILogger<MarkdownReportGenerator>>()));
+                services.AddSingleton<IRetentionSequenceService, RetentionSequenceService>();
                 services.AddSingleton<MainViewModel>();
                 services.AddSingleton<MainWindow>();
             })
