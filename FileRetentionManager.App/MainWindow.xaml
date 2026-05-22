@@ -53,7 +53,7 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="0 0 20 0">
                 <StackPanel>
                     <TextBlock Text="Settings"
                                FontSize="20"
@@ -115,10 +115,12 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <Button Command="{Binding AddFolderTargetPathCommand}"
-                                Content="Add folder" />
+                                Content="Add folder" 
+                                HorizontalAlignment="Stretch"/>
                         <Button Grid.Column="2"
                                 Command="{Binding RemoveSelectedTargetPathCommand}"
-                                Content="Remove" />
+                                Content="Remove"
+                                HorizontalAlignment="Stretch"/>
                         <ListBox Grid.Row="2"
                                  Grid.ColumnSpan="3"
                                  ItemsSource="{Binding TargetPaths}"
