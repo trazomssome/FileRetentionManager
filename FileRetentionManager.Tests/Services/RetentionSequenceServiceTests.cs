@@ -36,7 +36,7 @@ public sealed class RetentionSequenceServiceTests
             .Returns(false);
         fileSystemService
             .Setup(service => service.EnumerateFilesAsync(targetPath, true, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([matchedFile, ignoredFile]);
+            .Returns(EnumerateFiles(matchedFile, ignoredFile));
         fileSystemService
             .Setup(service => service.DeleteFileAsync(matchedFile.Path, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -93,7 +93,7 @@ public sealed class RetentionSequenceServiceTests
             .Returns(false);
         fileSystemService
             .Setup(service => service.EnumerateFilesAsync(targetPath, true, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([matchedFile]);
+            .Returns(EnumerateFiles(matchedFile));
         var userDecisionService = new Mock<IUserDecisionService>();
         userDecisionService
             .Setup(service => service.AskAsync(It.IsAny<SequenceStartRequest>(), It.IsAny<CancellationToken>()))
@@ -126,7 +126,7 @@ public sealed class RetentionSequenceServiceTests
             .Returns(false);
         fileSystemService
             .Setup(service => service.EnumerateFilesAsync(targetPath, true, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+            .Returns(EnumerateFiles());
         var reportGenerator = new Mock<IReportGenerator>();
         reportGenerator
             .Setup(generator => generator.GenerateAsync(It.IsAny<RetentionCycleReport>(), It.IsAny<CancellationToken>()))
@@ -196,10 +196,10 @@ public sealed class RetentionSequenceServiceTests
             .Returns(false);
         fileSystemService
             .Setup(service => service.EnumerateFilesAsync(firstTargetPath, true, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([matchedFile]);
+            .Returns(EnumerateFiles(matchedFile));
         fileSystemService
             .Setup(service => service.EnumerateFilesAsync(secondTargetPath, true, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([matchedFile]);
+            .Returns(EnumerateFiles(matchedFile));
         fileSystemService
             .Setup(service => service.DeleteFileAsync(matchedFile.Path, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -236,11 +236,7 @@ public sealed class RetentionSequenceServiceTests
             .Returns(false);
         fileSystemService
             .Setup(service => service.EnumerateFilesAsync(targetPath, true, It.IsAny<CancellationToken>()))
-            .Returns(async () =>
-            {
-                scanStarted.SetResult();
-                return await releaseScan.Task;
-            });
+            .Returns(WaitForRelease(scanStarted, releaseScan.Task));
         var reportGenerator = new Mock<IReportGenerator>();
         reportGenerator
             .Setup(generator => generator.GenerateAsync(It.IsAny<RetentionCycleReport>(), It.IsAny<CancellationToken>()))
@@ -300,5 +296,27 @@ public sealed class RetentionSequenceServiceTests
             true,
             ["*.tmp", "*.log"],
             ConditionJoinMode.And);
+    }
+
+    private static async IAsyncEnumerable<FileMetadata> EnumerateFiles(params FileMetadata[] files)
+    {
+        foreach (var file in files)
+        {
+            await Task.Yield();
+            yield return file;
+        }
+    }
+
+    private static async IAsyncEnumerable<FileMetadata> WaitForRelease(
+        TaskCompletionSource scanStarted,
+        Task<IReadOnlyList<FileMetadata>> releaseScan)
+    {
+        scanStarted.SetResult();
+
+        foreach (var file in await releaseScan)
+        {
+            await Task.Yield();
+            yield return file;
+        }
     }
 }

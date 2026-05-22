@@ -12,7 +12,7 @@ public interface IFileSystemService
 
     string CombinePath(params string[] paths);
 
-    Task<IReadOnlyList<FileMetadata>> EnumerateFilesAsync(
+    IAsyncEnumerable<FileMetadata> EnumerateFilesAsync(
         string rootPath,
         bool includeSubdirectories,
         CancellationToken cancellationToken);

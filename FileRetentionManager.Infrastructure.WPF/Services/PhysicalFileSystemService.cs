@@ -1,5 +1,7 @@
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading.Channels;
 using FileRetentionManager.Domain.Models;
 using FileRetentionManager.Domain.Services;
 using Microsoft.Extensions.Logging;
@@ -36,36 +38,63 @@ public sealed class PhysicalFileSystemService : IFileSystemService
         return Path.Combine(paths);
     }
 
-    public Task<IReadOnlyList<FileMetadata>> EnumerateFilesAsync(
+    public async IAsyncEnumerable<FileMetadata> EnumerateFilesAsync(
+        string rootPath,
+        bool includeSubdirectories,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Scanning target path {RootPath}", rootPath);
+        var channel = Channel.CreateBounded<FileMetadata>(
+            new BoundedChannelOptions(128)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                FullMode = BoundedChannelFullMode.Wait
+            });
+
+        _ = Task.Run(
+            () => ProduceFilesAsync(channel.Writer, rootPath, includeSubdirectories, cancellationToken),
+            CancellationToken.None);
+
+        await foreach (var file in channel.Reader.ReadAllAsync(cancellationToken))
+        {
+            yield return file;
+        }
+    }
+
+    private static async Task ProduceFilesAsync(
+        ChannelWriter<FileMetadata> writer,
         string rootPath,
         bool includeSubdirectories,
         CancellationToken cancellationToken)
     {
-        logger.LogInformation("Scanning target path {RootPath}", rootPath);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
 
-        return Task.Run<IReadOnlyList<FileMetadata>>(
-            () =>
+            if (File.Exists(rootPath))
             {
-                if (File.Exists(rootPath))
-                {
-                    return [CreateMetadata(new FileInfo(rootPath))];
-                }
+                await writer.WriteAsync(CreateMetadata(new FileInfo(rootPath)), cancellationToken);
+                writer.TryComplete();
+                return;
+            }
 
-                var searchOption = includeSubdirectories
-                    ? SearchOption.AllDirectories
-                    : SearchOption.TopDirectoryOnly;
-                var files = new List<FileMetadata>();
+            var searchOption = includeSubdirectories
+                ? SearchOption.AllDirectories
+                : SearchOption.TopDirectoryOnly;
 
-                foreach (var filePath in Directory.EnumerateFiles(rootPath, "*", searchOption))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
+            foreach (var filePath in Directory.EnumerateFiles(rootPath, "*", searchOption))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await writer.WriteAsync(CreateMetadata(new FileInfo(filePath)), cancellationToken);
+            }
 
-                    files.Add(CreateMetadata(new FileInfo(filePath)));
-                }
-
-                return files;
-            },
-            cancellationToken);
+            writer.TryComplete();
+        }
+        catch (Exception exception)
+        {
+            writer.TryComplete(exception);
+        }
     }
 
     public Task DeleteFileAsync(string path, CancellationToken cancellationToken)

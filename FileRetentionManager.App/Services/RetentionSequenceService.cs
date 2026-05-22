@@ -129,14 +129,14 @@ public sealed class RetentionSequenceService : IRetentionSequenceService
 
             try
             {
-                var files = await fileSystemService.EnumerateFilesAsync(
+                var files = fileSystemService.EnumerateFilesAsync(
                     targetPath,
                     criteria.IncludeSubdirectories,
                     cancellationToken);
 
-                foreach (var file in files.Where(file => retentionRule.IsMatch(file, criteria)))
+                await foreach (var file in files.WithCancellation(cancellationToken))
                 {
-                    if (seenPaths.Add(file.Path))
+                    if (retentionRule.IsMatch(file, criteria) && seenPaths.Add(file.Path))
                     {
                         candidates.Add(file);
                     }
