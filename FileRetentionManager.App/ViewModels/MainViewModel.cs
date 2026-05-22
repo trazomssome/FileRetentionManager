@@ -12,21 +12,25 @@ using FluentValidation;
 
 namespace FileRetentionManager.App.ViewModels;
 
-public partial class MainViewModel : ObservableValidator, IRetentionSettingsValidationSource
+public partial class MainViewModel : ObservableValidator, IRetentionSettingsValidationSource, IAsyncDisposable
 {
     private static readonly Lazy<IReadOnlyList<string>> ValidatedPropertyNames = new(GetValidatedPropertyNames);
 
     private readonly IRetentionSequenceService retentionSequenceService;
+    private readonly IRetentionScheduleService retentionScheduleService;
     private readonly ITargetPathPickerService targetPathPickerService;
     private readonly SynchronizationContext? synchronizationContext;
 
     private CancellationTokenSource? scheduleCancellation;
+    private Task? scheduleTask;
 
     public MainViewModel(
         IRetentionSequenceService retentionSequenceService,
+        IRetentionScheduleService retentionScheduleService,
         ITargetPathPickerService targetPathPickerService)
     {
         this.retentionSequenceService = retentionSequenceService;
+        this.retentionScheduleService = retentionScheduleService;
         this.targetPathPickerService = targetPathPickerService;
         Validator = new RetentionSettingsValidator();
         synchronizationContext = SynchronizationContext.Current;
@@ -145,7 +149,7 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
     {
         if (IsRetentionEnabled)
         {
-            StopSchedule();
+            await StopScheduleAsync();
             IsRetentionEnabled = false;
             ActivationButtonText = "Enable";
             StatusMessage = "Retention is disabled.";
@@ -166,8 +170,7 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
         IsRetentionEnabled = true;
         ActivationButtonText = "Disable";
         StatusMessage = $"Retention is enabled. {StatusMessage}";
-        scheduleCancellation = new CancellationTokenSource();
-        _ = RunScheduleAsync(draft, scheduleCancellation.Token);
+        StartSchedule(draft);
     }
 
     [RelayCommand]
@@ -187,12 +190,10 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
     {
         try
         {
-            using var timer = new PeriodicTimer(draft.ScheduleInterval);
-
-            while (await timer.WaitForNextTickAsync(cancellationToken))
-            {
-                await ExecuteCycleFromViewModelAsync(draft, cancellationToken, promptForSequenceStart: false);
-            }
+            await retentionScheduleService.RunAsync(
+                draft.ScheduleInterval,
+                token => ExecuteCycleFromViewModelAsync(draft, token, promptForSequenceStart: false),
+                cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -488,10 +489,42 @@ public partial class MainViewModel : ObservableValidator, IRetentionSettingsVali
         return completion.Task;
     }
 
-    private void StopSchedule()
+    private void StartSchedule(RetentionSettingsDraft draft)
     {
-        scheduleCancellation?.Cancel();
-        scheduleCancellation?.Dispose();
+        scheduleCancellation = new CancellationTokenSource();
+        scheduleTask = RunScheduleAsync(draft, scheduleCancellation.Token);
+    }
+
+    private async Task StopScheduleAsync()
+    {
+        var cancellation = scheduleCancellation;
+        var runningTask = scheduleTask;
+
         scheduleCancellation = null;
+        scheduleTask = null;
+
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await cancellation.CancelAsync();
+
+            if (runningTask is not null)
+            {
+                await runningTask;
+            }
+        }
+        finally
+        {
+            cancellation.Dispose();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await StopScheduleAsync();
     }
 }

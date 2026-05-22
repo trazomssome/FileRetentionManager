@@ -40,6 +40,7 @@ public partial class App : Application
                         Path.Combine(AppContext.BaseDirectory, "reports"),
                         provider.GetRequiredService<ILogger<MarkdownReportGenerator>>()));
                 services.AddSingleton<IRetentionSequenceService, RetentionSequenceService>();
+                services.AddSingleton<IRetentionScheduleService, RetentionScheduleService>();
                 services.AddSingleton<MainViewModel>();
                 services.AddSingleton<MainWindow>();
             })
@@ -57,7 +58,15 @@ public partial class App : Application
         if (host is not null)
         {
             await host.StopAsync(TimeSpan.FromSeconds(5));
-            host.Dispose();
+
+            if (host is IAsyncDisposable asyncDisposable)
+            {
+                await asyncDisposable.DisposeAsync();
+            }
+            else
+            {
+                host.Dispose();
+            }
         }
 
         Log.CloseAndFlush();

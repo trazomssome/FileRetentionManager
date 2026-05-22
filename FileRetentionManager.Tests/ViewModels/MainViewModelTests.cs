@@ -248,6 +248,92 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task ToggleActivationCommand_StartsSchedule_AfterInitialSequenceCompletes()
+    {
+        var sequenceService = new Mock<IRetentionSequenceService>();
+        sequenceService
+            .Setup(service => service.ExecuteAsync(
+                It.IsAny<RetentionSettingsDraft>(),
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RetentionSequenceResult(
+                RetentionSequenceStatus.Completed,
+                DateTimeOffset.UtcNow,
+                new ReportArtifact(@"C:\Reports\report.md", "# report"),
+                [],
+                [],
+                []));
+        var scheduleService = new Mock<IRetentionScheduleService>();
+        scheduleService
+            .Setup(service => service.RunAsync(
+                TimeSpan.FromHours(24),
+                It.IsAny<Func<CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var viewModel = CreateViewModel(sequenceService, scheduleService);
+        viewModel.TargetPaths.Add(@"C:\RetentionTarget");
+
+        await viewModel.ToggleActivationCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.IsRetentionEnabled);
+        Assert.Equal("Disable", viewModel.ActivationButtonText);
+        scheduleService.Verify(
+            service => service.RunAsync(
+                TimeSpan.FromHours(24),
+                It.IsAny<Func<CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ToggleActivationCommand_DisablesSchedule_AndWaitsForCancellation()
+    {
+        var scheduleStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sequenceService = new Mock<IRetentionSequenceService>();
+        sequenceService
+            .Setup(service => service.ExecuteAsync(
+                It.IsAny<RetentionSettingsDraft>(),
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RetentionSequenceResult(
+                RetentionSequenceStatus.Completed,
+                DateTimeOffset.UtcNow,
+                new ReportArtifact(@"C:\Reports\report.md", "# report"),
+                [],
+                [],
+                []));
+        var scheduleService = new Mock<IRetentionScheduleService>();
+        scheduleService
+            .Setup(service => service.RunAsync(
+                It.IsAny<TimeSpan>(),
+                It.IsAny<Func<CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<TimeSpan, Func<CancellationToken, Task>, CancellationToken>(
+                async (_, _, cancellationToken) =>
+                {
+                    try
+                    {
+                        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        scheduleStopped.SetResult();
+                        throw;
+                    }
+                });
+        var viewModel = CreateViewModel(sequenceService, scheduleService);
+        viewModel.TargetPaths.Add(@"C:\RetentionTarget");
+
+        await viewModel.ToggleActivationCommand.ExecuteAsync(null);
+        await viewModel.ToggleActivationCommand.ExecuteAsync(null);
+
+        await scheduleStopped.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.False(viewModel.IsRetentionEnabled);
+        Assert.Equal("Enable", viewModel.ActivationButtonText);
+        Assert.Equal("Retention is disabled.", viewModel.StatusMessage);
+    }
+
+    [Fact]
     public async Task AddFolderTargetPathCommand_AddsSelectedFolder()
     {
         const string targetPath = @"C:\RetentionTarget";
@@ -265,10 +351,12 @@ public sealed class MainViewModelTests
 
     private static MainViewModel CreateViewModel(
         Mock<IRetentionSequenceService>? sequenceService = null,
+        Mock<IRetentionScheduleService>? scheduleService = null,
         Mock<ITargetPathPickerService>? targetPathPickerService = null)
     {
         return new MainViewModel(
             (sequenceService ?? new Mock<IRetentionSequenceService>()).Object,
+            (scheduleService ?? new Mock<IRetentionScheduleService>()).Object,
             (targetPathPickerService ?? new Mock<ITargetPathPickerService>()).Object);
     }
 }
